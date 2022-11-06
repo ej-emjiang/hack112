@@ -1,7 +1,17 @@
 from cmu_112_graphics import *
 import math, copy, random
 import floorplan as fp
+import floorPlanList as fpl
 import testmap as tp
+'''
+Changelog (Emily woke up at 7:00 and fucked around):
+Pause menu added
+Kai now exists (as a bisque circle) and can move
+Some rat bugs fixed (TODO: actually spawn and draw the rats)
+TODO: game balancing once we do start spawning rats
+TODO: make game look good
+TODO: gut the edit controls menu
+'''
 ################################################################################
 #
 # CLASSES
@@ -12,13 +22,29 @@ class Player:
     def __init__(self, row, col):
         self.row, self.col = row, col
         self.inventory = dict()
+
+    def drawPlayer(self, app, canvas):
+        if 0 <= self.row < app.rows and 0 <= self.col < app.cols:
+            # TODO: canvas.create_circle. idk how to do this
+            x0, y0, x1, y1 = getCellBounds(app, self.row, self.col)
+            margin = app.width*0.001
+            canvas.create_oval(x0+margin, y0+margin, x1-margin, y1-margin, fill='bisque2')
     
     def movePlayer(self, app, drow, dcol): 
         # TODO: finish this when the map is stored in app
-        targetRow, targetCol = self.row + drow, self.col + dcol
-        if ((self.row + drow < 0) or (self.row + drow >= app.rows) or (self.col + dcol < 0) or (self.col + dcol >= app.cols)):
-            self.row -= dcol
-            self.col -= dcol
+        if not ((self.row + drow < 0) or (self.row + drow >= app.rows) or (self.col + dcol < 0) or (self.col + dcol >= app.cols)):
+            self.row += drow
+            self.col += dcol
+
+            if not self.legalMove(app):
+                self.row -= drow
+                self.col -= dcol
+
+    def legalMove(self, app):
+        if app.map[self.row][self.col] is False:
+            return False
+        return True
+
     def getItem(self, app, item): # or something like this
         self.inventory[item] = self.inventory.get(item, 0)
         self.inventory[item] += 1
@@ -31,11 +57,13 @@ class Button:
         self.fill = fill
         self.label = label
         Button.buttonList.append(self)
+        self.isVisible = False
 
     def __repr__(self):
         return f'{self.label} at ({self.cornX}, {self.cornY})'
 
     def drawButton(self, app, canvas):
+        self.isVisible = True
         fontSize = int(0.1*self.width)
         canvas.create_rectangle(self.cornX, self.cornY, self.cornX + self.width, self.cornY + self.height, 
         fill = self.fill)
@@ -47,7 +75,9 @@ class Button:
         for button in Button.buttonList:
             if (button.cornX <= mouseX <= button.cornX+button.width and 
                 button.cornY <= mouseY <= button.cornY + button.height):
-                return button
+                if button.isVisible:
+                    print(button)
+                    return button
         return None
 
 class Controls:
@@ -130,25 +160,50 @@ class Rat(object):
         initXDir = random.randint(-1, 2)
         initYDir = random.randint(-1, 2)
         self.direction = (initXDir, initYDir)
-    
-    def moveRat(self):
-        pass
-            
+
+    def isLegalMove(self, app, x, y):
+        if x >= app.cols or y >= app.rows:
+            return False
+        if app.map[x][y] == True:
+            return False
+        return True
+
+    def moveRat(self, app):
+        self.x += self.direction[0]
+        self.y += self.direction[1]
+        if not self.isLegalMove(app, self.x, self.y):
+            self.x -= self.direction[0]
+            self.y -= self.direction[1]
+
 # 🐀
+
 def spawnRat(app):
-    app.mischief.append[Rat(x, y)]
+    x = random.randint(0, app.rows-1)
+    y = random.randint(0, app.cols-1)
+    if app.map[x][y]==False:
+        app.mischief.append(Rat(x, y))
 
 def timerFired(app):
-    Rat.spawnRat(app)
-############# not classes ################
+    if not app.paused and app.currScreen == 'game':
+        for rat in app.mischief:
+            rat.moveRat(app)
+        if app.timerCount % 10 == 0:
+            spawnRat(app)
+    
+    app.timerCount += 1
+################################################################################
+#
+# NOT CLASSES
+#
+################################################################################
 
 def appStarted(app):
-    # app.screens = Screen.initializeScreens(app)
     app.currScreen = 'splash'
     app.prevScreen = list()
     app.prevScreen.append(app.currScreen)
-    app.rows = len(tp.testmap)
-    app.cols = len(tp.testmap[0])
+    app.map = tp.testmap
+    app.rows = len(app.map)
+    app.cols = len(app.map[0])
     app.margin = 5
     app.startButton = Button(app.width/2-75, app.height*0.57, 150, 80, 'start')
     app.creditsButton = Button(app.width/2-75, app.height*0.83, 150, 80, 'credits')
@@ -158,8 +213,10 @@ def appStarted(app):
     app.controls.createControlButtons(app)
     app.editedControl = None
     app.mischief = []
-    app.timerDelay = 50
-    kai = Player(2, 2)
+    app.timerDelay = 100
+    app.timerCount = 0
+    app.kai = Player(2, 2)
+    app.paused = True
 
 
 ################################################################################
@@ -170,19 +227,20 @@ def appStarted(app):
 def redrawAll(app, canvas):
     if app.currScreen == 'splash':
         drawSplashScreen(app, canvas)
+    elif app.currScreen == 'game':
+        drawGameScreen(app, canvas)
+        if app.paused == True:
+            drawPauseScreen(app, canvas)
     elif app.currScreen == 'credits':
         drawCreditsScreen(app, canvas)
     elif app.currScreen == 'settings':
         drawSettingsScreen(app, canvas)
         if app.editedControl:
             app.editedControl.drawControlMenu(app, canvas)
-    elif app.currScreen == 'game':
-        drawBoard(app, canvas)
+
 
 def drawSplashScreen(app, canvas):
     # draw Donner
-    # draw title screen text
-    # buttons for startgame, options, and credits
     introFontSize = 40
     canvas.create_text(app.width/2, 300, font=f'Arial {introFontSize} bold',
         text='Escape Donner Dungeon')
@@ -205,6 +263,22 @@ def drawSettingsScreen(app, canvas):
         button.drawButton(app, canvas)
     app.backButton.drawButton(app, canvas)
 
+def drawGameScreen(app, canvas):
+    drawBoard(app, canvas)
+    app.kai.drawPlayer(app, canvas)
+
+def drawPauseScreen(app, canvas):
+    margin = app.width*0.05
+    canvas.create_rectangle(margin, margin, app.width-margin, app.height-margin, fill='bisque')
+    canvas.create_text(app.width/2, margin+app.height*0.06, font='Arial 20', text='Paused')
+    resumeButton = Button(app.width/2-0.18*app.width, app.height/2 - 70, 0.36*app.width, 90, 'resume')
+    resumeButton.drawButton(app, canvas)
+    exitGame = Button(app.width/2-0.18*app.width, app.height/2 + 40, 0.36*app.width, 90, 'menu')
+    exitGame.drawButton(app, canvas)
+    app.settingsButton.drawButton(app, canvas)
+    app.creditsButton.drawButton(app, canvas)
+    app.backButton.drawButton(app, canvas)
+
 def mouseMoved(app, event):
     pass
     # trying to highlight a button when you hover over it
@@ -223,50 +297,67 @@ def mousePressed(app, event):
     buttonPressed = Button.getButton(app, event)
     if buttonPressed != None:
         buttonName = buttonPressed.label.lower()
+        for button in Button.buttonList:
+            button.isVisible = False
         if buttonName == 'back' and len(app.prevScreen) != 0: # should work for whatever 
             # TODO: properly update app.prevScreen
             app.currScreen = app.prevScreen[-1]
         if app.currScreen == 'splash':
             # pressing the buttons that are on the splashscreen
             if buttonName == 'start':
+                app.paused = False
                 app.currScreen = 'game'
             elif buttonName == 'settings':
                 app.currScreen = 'settings'
             elif buttonName == 'credits':
                 app.currScreen = 'credits'
-        if app.currScreen == 'settings':
+        elif app.currScreen == 'settings':
             if isinstance(buttonPressed, cButton) and buttonPressed != None:
                 event.key = None
                 app.editedControl = buttonPressed
+        elif app.currScreen == 'game':
+            if buttonName == 'resume':
+                app.paused = False
+            elif buttonName == 'settings':
+                app.currScreen = 'settings'
+            elif buttonName == 'credits':
+                app.currScreen = 'credits'
+            elif buttonName == 'menu':
+                app.prevScreen.append('splash')
+                app.currScreen = 'splash'
+        if not app.currScreen == 'game':
+            app.paused = True
 
 
 def keyPressed(app, event):
     key = event.key.lower() # use key so we don't have to worry about capitalization
-    if key == 'w':
-        Player.movePlayer(app, -1, 0)
-    if key == 'a':
-        Player.movePlayer(app, 0, -1)
-    if key == 's':
-        Player.movePlayer(app, 1, 0)
-    if key == 'd':
-        Player.movePlayer(app, 0, 1)
-    if key == 'h':
-        print(app.controls.inventory)
-    if key == 'escape' and len(app.prevScreen) != 0: # go back. might be fucky if this is also used to close inventory IDFK
+    if key == 'escape':
+        print(app.paused)
+    if not app.paused and app.currScreen == 'game':
+        if key == 'w':
+            app.kai.movePlayer(app, -1, 0)
+        elif key == 'a':
+            app.kai.movePlayer(app, 0, -1)
+        elif key == 's':
+            app.kai.movePlayer(app, 1, 0)
+        elif key == 'd':
+            app.kai.movePlayer(app, 0, 1)
+        elif key == 'escape':
+            app.paused = True
+            app.prevScreen.append('game')
+    elif app.paused and app.currScreen == 'game':
+        if key == 'escape':
+            app.paused = False
+    elif key == 'escape' and len(app.prevScreen) != 0: # go back. might be fucky if this is also used to close inventory IDFK
         app.currScreen = app.prevScreen[-1]
-    if app.currScreen == 'settings' and app.editedControl:
+    elif app.currScreen == 'settings' and app.editedControl:
         app.editedControl.editControls(app, key)
-    if app.currScreen == 'game': 
-        # movement, interacting, etc.
-        pass
 
-def drawPlayer(app,canvas):
-    pass
 
 def drawBoard(app, canvas):
-    for row in range(len(tp.testmap)):
-        for col in range(len(tp.testmap)):
-            if tp.testmap[row][col] == True:
+    for row in range(app.rows):
+        for col in range(app.cols):
+            if app.map[row][col] == False:
                 drawCell(app, canvas, row, col,'blue')
             else:
                 drawCell(app,canvas,row,col,'white')
